@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>PM Calendar</title>
+
+<style>
+  body{
+    font-family: Arial, sans-serif;
+    padding:20px;
+    background:#eef2ff;
+  }
+  h2{ margin-top:0; }
+
+  table{
+    border-collapse:collapse;
+    width:100%;
+    margin-top:15px;
+    background:white;
+  }
+  th,td{
+    border:1px solid #ccc;
+    padding:6px 8px;
+    font-size:13px;
+  }
+  th{
+    background:#2563eb;
+    color:white;
+    position:sticky;
+    top:0;
+    z-index:2;
+    text-align:center;
+  }
+  td:first-child{ font-weight:bold; }
+
+  .month-cell{
+    text-align:center;
+    cursor:pointer;
+    font-size:10px;
+    font-weight:bold;
+    min-width:55px;
+    padding:4px;
+    white-space:nowrap;
+  }
+
+  /* STATUS COLORS */
+  .st-empty{ background:#f3f4f6; color:#6b7280; }
+  .st-out{ background:#fee2e2; color:#b91c1c; }
+  .st-progress{ background:#fef3c7; color:#92400e; }
+  .st-done{ background:#dcfce7; color:#166534; }
+  .month-cell:hover{ filter:brightness(0.9); }
+
+  .mini-date{
+    font-size:11px;
+    font-weight:500;
+    color:#333;
+    white-space:nowrap;
+  }
+
+  /* MODAL */
+  #overlay{
+    position:fixed; inset:0;
+    background:rgba(0,0,0,0.4);
+    display:none;
+    align-items:center;
+    justify-content:center;
+    z-index:10;
+  }
+
+  #editModal{
+    background:white;
+    padding:18px;
+    width:350px;
+    border-radius:10px;
+    box-shadow:0 8px 30px rgba(0,0,0,0.25);
+  }
+
+  #editModal input,#editModal select{ width:100%; padding:6px; margin-top:5px; }
+
+  .btn-row{ display:flex; gap:8px; margin-top:12px; }
+  #btnSave{ background:#2563eb; color:white; flex:1; }
+  #btnCancel{ background:#ddd; }
+
+  /* LOADING */
+  #progressOverlay{
+    position:fixed; inset:0;
+    background:rgba(255,255,255,0.7);
+    display:none;
+    align-items:center;
+    justify-content:center;
+    z-index:999;
+    flex-direction:column;
+  }
+
+  .predict-cell{
+    background:#dbeafe;
+    color:#1e3a8a;
+    font-weight:bold;
+    border:2px solid #1d4ed8;
+  }
+  
+  .btn {
+  padding: 6px 14px;
+  border: none;
+  font-size: 13px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: bold;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-blue { background:#2563eb; color:white; }
+.btn-green { background:#16a34a; color:white; }
+.btn-green:hover { filter:brightness(0.9); }
+.btn-blue:hover { filter:brightness(0.9); }
+
+
+
+</style>
+</head>
+
+<body>
+<h2>📋 Preventive Maintenance Calendar Battery 2026</h2>
+<div class="toolbar">
+  <!-- KIRI -->
+  <div class="toolbar-left">
+    <button class="btn btn-blue" onclick="loadData()">🔄 Refresh</button>
+    <button class="btn btn-green" onclick="openDetail()">📌 Detail Report</button>
+    <button class="btn btn-green" onclick="openDashboard()">📊 Dashboard</button>
+    <span id="statusText" style="font-size:12px;color:#555;margin-left:6px;"></span>
+  </div>
+
+
+
+<table id="pmTable">
+  <thead></thead>
+  <tbody></tbody>
+</table>
+
+<!-- MODAL -->
+<div id="overlay">
+  <div id="editModal">
+    <h3 id="modalTitle" style="margin-bottom:10px;"></h3>
+
+    <label>Status</label>
+    <select id="statusInput">
+      <option value="">(kosong)</option>
+      <option value="OUTSTANDING">OUTSTANDING</option>
+      <option value="PROGRESS">PROGRESS</option>
+      <option value="SELESAI">SELESAI</option>
+    </select>
+
+    <label>Start Date</label>
+    <input type="date" id="startInput">
+
+    <label>Finish Date</label>
+    <input type="date" id="finishInput">
+
+    <div class="btn-row">
+      <button id="btnCancel" onclick="closeModal()">Batal</button>
+      <button id="btnSave" onclick="saveMonth()">Simpan</button>
+    </div>
+
+    <small id="colInfo" style="color:#666;margin-top:10px;display:block;"></small>
+  </div>
+</div>
+
+<!-- LOADING -->
+<div id="progressOverlay">
+  <b>Menyimpan...</b>
+  <div style="width:200px;height:10px;background:#ddd;border-radius:5px;margin-top:8px;">
+    <div id="progressFill" style="width:0%;height:100%;background:#2563eb;transition:.2s;"></div>
+  </div>
+  <span id="progressText" style="font-size:12px;margin-top:4px;">0%</span>
+</div>
+
+<script>
+const apiURL = "https://script.google.com/macros/s/AKfycbzXCNzmdj0FNCjR14UXJoNmeLmA98izpIa2oGR8mcLlQIhOjpOzuwSYQ5ZoePoJpcIywg/exec";
+const BASE_COLS = ["NAMA PLANT","LAST PM","FREK","NEXT PM"];
+const MONTHS = ["JAN","FEB","MAR","APR","MEI","JUN","JUL","AGT","SEP","OKT","NOV","DES"];
+
+let allData=[], currentRowIndex=null, currentMonth=null;
+
+// FORMAT TANGGAL (DISPLAY)
+function formatDisplayDate(v){
+  if(!v) return "";
+  let d = new Date(v);
+  if(isNaN(d)) return v;
+  return d.toLocaleDateString("id-ID"); // dd/mm/yyyy
+}
+
+// FORMAT UNTUK INPUT (YYYY-MM-DD)
+function formatInputDate(v){
+  if(!v) return "";
+  let d = new Date(v);
+  if(isNaN(d)) return "";
+  return d.toISOString().split("T")[0];
+}
+
+// LOAD DATA
+async function loadData(){
+  document.getElementById("statusText").textContent="Memuat...";
+  try{
+    let res = await fetch(apiURL+"?action=get");
+    allData = await res.json();
+    renderTable();
+    document.getElementById("statusText").textContent="✔ Loaded";
+  }catch(e){ alert("Gagal load: "+e.message); }
+}
+
+// RENDER TABLE
+function renderTable(){
+  const head = document.querySelector("#pmTable thead");
+  const body = document.querySelector("#pmTable tbody");
+  const currentYear = new Date().getFullYear();
+
+  head.innerHTML = "<tr>"+[...BASE_COLS,...MONTHS,"Next"].map(h=>`<th>${h}</th>`).join("")+"</tr>";
+
+  body.innerHTML = allData.map((row,i)=>{
+    const lastPMText = row["LAST PM"] ? `<span class="mini-date">${formatDisplayDate(row["LAST PM"])}</span>` : "";
+    const nextPMRaw = row["NEXT PM"] || "";
+    const nextPMDate = nextPMRaw ? new Date(nextPMRaw) : null;
+    const nextYear   = nextPMDate ? nextPMDate.getFullYear() : null;
+    const nextPMText = nextPMRaw ? `<span class="mini-date">${formatDisplayDate(nextPMRaw)}</span>` : "";
+
+    let html = `
+      <tr>
+        <td>${row["NAMA PLANT"] || ""}</td>
+        <td>${lastPMText}</td>
+        <td style="text-align:center">${row["FREK"] || ""}</td>
+        <td>${nextPMText}</td>
+    `;
+
+    // Kolom bulan JAN–DES
+    MONTHS.forEach(m => {
+      let st = row[`${m}_STATUS`] || "";
+      let s = row[`${m}_START`] || "";
+      let f = row[`${m}_FINISH`] || "";
+
+      let predicted = false;
+
+      // Highlight di bulan hanya kalau NEXT PM masih di tahun ini
+      if (nextPMDate && nextYear === currentYear) {
+        let monthIndex = nextPMDate.getMonth(); // 0..11
+        if (MONTHS.indexOf(m) === monthIndex && !st) {
+          predicted = true;
+        }
+      }
+
+      let className = predicted ? "predict-cell" : getClass(st);
+      html += `<td class="month-cell ${className}" onclick="openModal(${i},'${m}')">${formatCell(st,s,f)}</td>`;
+    });
+
+    // Kolom paling kanan "Next"
+    let nextLabel = "";
+    let nextClass = "";
+    if (nextPMDate && nextYear > currentYear) {
+      nextLabel = formatDisplayDate(nextPMDate);
+      nextClass = "predict-cell";
+    }
+    html += `<td class="${nextClass}">${nextLabel}</td>`;
+
+    return html + "</tr>";
+  }).join("");
+}
+
+function getClass(s){
+  s=s.toUpperCase();
+  if(s.includes("OUT")) return "st-out";
+  if(s.includes("PROGRESS")) return "st-progress";
+  if(s.includes("SELESAI")) return "st-done";
+  return "st-empty";
+}
+
+function formatCell(status,start,finish){
+  if(!status) return "-";
+  return `<span style="font-size:10px;font-weight:bold;">${status}</span>`;
+}
+
+// OPEN MODAL
+function openModal(i,m){
+  currentRowIndex=i; currentMonth=m;
+  let r=allData[i];
+
+  document.getElementById("modalTitle").textContent=`${m} - ${r["NAMA PLANT"]}`;
+
+  document.getElementById("statusInput").value=r[`${m}_STATUS`]||"";
+  document.getElementById("startInput").value=formatInputDate(r[`${m}_START`]||"");
+  document.getElementById("finishInput").value=formatInputDate(r[`${m}_FINISH`]||"");
+
+  document.getElementById("colInfo").textContent=`Kolom: ${m}_STATUS, ${m}_START, ${m}_FINISH`;
+  document.getElementById("overlay").style.display="flex";
+}
+
+function closeModal(){ document.getElementById("overlay").style.display="none"; }
+
+// SAVE
+async function saveMonth(){
+  showProgress();
+  try{
+    let row=currentRowIndex+2;
+    let updates=[
+      {col:`${currentMonth}_STATUS`,val:document.getElementById("statusInput").value},
+      {col:`${currentMonth}_START`,val:document.getElementById("startInput").value},
+      {col:`${currentMonth}_FINISH`,val:document.getElementById("finishInput").value}
+    ];
+
+    let step=0;
+    for(let u of updates){
+      let res=await fetch(apiURL,{method:"POST",body:new URLSearchParams({action:"update",row,col:u.col,value:u.val})});
+      let txt=await res.text();
+      if(!txt.includes("OK")) throw new Error(txt);
+      step+=Math.floor(100/updates.length);
+      updateProgress(step);
+      await new Promise(r=>setTimeout(r,200));
+    }
+
+    updateProgress(100);
+    await new Promise(r=>setTimeout(r,300));
+
+    hideProgress(); closeModal(); loadData();
+    alert("✔ Disimpan!");
+  }catch(e){
+    hideProgress();
+    alert("❌ ERROR: "+e.message);
+  }
+}
+
+// UI HELPERS
+function showProgress(){ document.getElementById("progressOverlay").style.display="flex"; updateProgress(5); }
+function hideProgress(){ document.getElementById("progressOverlay").style.display="none"; updateProgress(0); }
+function updateProgress(v){
+  document.getElementById("progressFill").style.width=v+"%";
+  document.getElementById("progressText").textContent=v+"%";
+}
+
+function openDetail(){
+  window.location.href = "https://yoshuahtgl.github.io/form-ReportPM/";
+}
+
+function openDashboard(){
+  window.location.href = "https://yoshuahtgl.github.io/dasboard_PM/";
+}
+
+loadData();
+</script>
+
+</body>
+</html>
